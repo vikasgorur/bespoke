@@ -51,7 +51,9 @@ func newBespoke(exe io.Reader) *Bespoke {
 }
 
 func (b *Bespoke) addBuffer(p []byte, filename string) error {
-	w, err := b.archive.Create(filename)
+	fh := &zip.FileHeader{Name: filename}
+
+	w, err := b.archive.CreateHeader(fh)
 	if err != nil {
 		return err
 	}
@@ -81,6 +83,8 @@ func (b *Bespoke) finalize() error {
 	}
 
 	b.bundle = io.MultiReader(b.executable, b.buffer)
+	b.finalized = true
+
 	return nil
 }
 
