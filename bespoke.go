@@ -23,6 +23,7 @@ package bespoke
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,11 +35,9 @@ import (
 )
 
 const (
-	mapFilename          = ".bespoke.json"
-	fileHeaderLength     = 30    // + filename + extra (See https://golang.org/src/archive/zip/struct.go)
-	filenameLengthOffset = 26    // offset of filename length within the file header
-	extraLengthOffset    = 28    // offset of extra field length within the file header
-	exeFileName          = "exe" // filename for the executable's entry in the zip file
+	mapFilename = ".bespoke.json"
+
+	directoryEndSignature = 0x06054b50
 )
 
 type Bespoke struct {
@@ -94,20 +93,43 @@ func (b *Bespoke) addFile(p string) error {
 	return b.addBuffer(content, filename)
 }
 
+// Write the archive to the buffer and fix up offsets.
 func (b *Bespoke) finalize() error {
 	if err := b.archive.Close(); err != nil {
 		return err
 	}
 
-	b.fixOffsets()
+	if err := b.fixOffsets(); err != nil {
+		return err
+	}
 	b.finalized = true
 
 	return nil
 }
 
-// Add exeLength to every offset
-func (b *Bespoke) fixOffsets() {
-	return
+func findEocdOffset(b []byte) int64 {
+	sigBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint64(sigBytes, directoryEndSignature)
+
+	for i := len(b) - 4; i > 0; i-- {
+		if b[i] == sigBytes[0] &&
+			b[i+1] == sigBytes[1] &&
+			b[i+2] == sigBytes[i+2] &&
+			b[i+3] == sigBytes[i+4] {
+			return int64(i)
+		}
+	}
+
+	return -1
+}
+
+// The offsets of files within the archive are wrong because we've prepended
+// the executable. So add exeLength to every offset.
+//
+// This is equivalent to the --adjust-sfx option to the zip utility.
+func (b *Bespoke) fixOffsets() error {
+	fmt.Println(findEocdOffset(b.buffer.Bytes()))
+	return nil
 }
 
 func (b *Bespoke) Read(p []byte) (int, error) {
