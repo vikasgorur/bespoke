@@ -23,7 +23,6 @@ package bespoke
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,29 +44,23 @@ const (
 type Bespoke struct {
 	buffer    *bytes.Buffer // buffer that contains the zip archive
 	archive   *zip.Writer   // zip archive
+	exeLength int64         // length of the executable that's stored at the beginning of buffer
 	finalized bool          // whether Close() has been called on archive
 }
 
 func newBespoke(exe io.Reader) (*Bespoke, error) {
 	buffer := new(bytes.Buffer)
-	archive := zip.NewWriter(buffer)
-
-	w, err := archive.CreateHeader(&zip.FileHeader{
-		Name:   exeFileName,
-		Method: 0, // "Store", i.e., no compression
-	})
-
+	n, err := io.Copy(buffer, exe)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := io.Copy(w, exe); err != nil {
-		return nil, err
-	}
+	archive := zip.NewWriter(buffer)
 
 	return &Bespoke{
 		buffer:    buffer,
 		archive:   archive,
+		exeLength: n,
 		finalized: false,
 	}, nil
 }
@@ -106,12 +99,15 @@ func (b *Bespoke) finalize() error {
 		return err
 	}
 
-	if err := discardFileHeader(b.buffer); err != nil {
-		return err
-	}
+	b.fixOffsets()
 	b.finalized = true
 
 	return nil
+}
+
+// Add exeLength to every offset
+func (b *Bespoke) fixOffsets() {
+	return
 }
 
 func (b *Bespoke) Read(p []byte) (int, error) {
@@ -120,28 +116,6 @@ func (b *Bespoke) Read(p []byte) (int, error) {
 	}
 
 	return b.buffer.Read(p)
-}
-
-// Read and discard the file header for the executable
-// so that the first thing read when the user calls Read() is the
-// content of the executable itself.
-func discardFileHeader(buf *bytes.Buffer) error {
-	var header = make([]byte, fileHeaderLength)
-	n, err := buf.Read(header)
-	if err != nil || n < len(header) {
-		return err
-	}
-
-	filenameLength := binary.LittleEndian.Uint16(header[filenameLengthOffset : filenameLengthOffset+2])
-	extraFieldLength := binary.LittleEndian.Uint16(header[extraLengthOffset : extraLengthOffset+2])
-
-	var moreHeader = make([]byte, filenameLength+extraFieldLength)
-	n, err = buf.Read(moreHeader)
-	if err != nil || n < len(moreHeader) {
-		return err
-	}
-
-	return nil
 }
 
 func WithMap(exe io.Reader, data map[string]string) (*Bespoke, error) {
