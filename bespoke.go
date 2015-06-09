@@ -1,22 +1,16 @@
 /*
 
 Package bespoke provides a way to create custom binaries: files that are executable
-that also contain additional data. The data can be anything --- a simple key-value map,
-a text file, or an entire directory tree.
+that also contain additional data. The data can either be a key-value map or an
+arbitrary file.
 
 Motivation
 
 A common use for the Go language is creating command-line tools. As a concrete example,
 consider a web application that allows its users to download a command-line
 client to interact with it. The client may need to be configured with such
-things as the user name, or perhaps an access token. Instead of making the user
-edit a text file or supply these as options, why not deliver a binary
-that was customized ("bespoke") for her and already included all the
-user-specific data?
-
-A secondary use for this package is to create "bundles" for deploying web apps that
-contain both the application binary and static assets (html, css, js, images). This is
-similar to how a Java application would be packaged into a JAR.
+things as the user name or an access token. Using bespoke you can create a binary
+that is specifically configured for each user who downloads it.
 */
 package bespoke
 
@@ -55,6 +49,9 @@ const (
 	fhFixedSize            = 46 // Size of the non-variable parts
 )
 
+// Bespoke represents a packaged bespoke binary. It is created by the functions
+// bespoke.WithMap() and bespoke.WithFile(). It acts as an io.Reader and the contents
+// of the bespoke binary can be accessed through Read().
 type Bespoke struct {
 	buffer    *bytes.Buffer // buffer that contains the zip archive
 	archive   *zip.Writer   // zip archive
@@ -125,9 +122,12 @@ func (b *Bespoke) finalize() error {
 	return nil
 }
 
+var le = binary.LittleEndian
+
+// Return the offset of the end of central directory table.
 func findEocdOffset(b []byte) int64 {
 	sigBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(sigBytes, directoryEndSignature)
+	le.PutUint32(sigBytes, directoryEndSignature)
 
 	for i := len(b) - 4; i > 0; i-- {
 		if b[i] == sigBytes[0] &&
@@ -141,6 +141,15 @@ func findEocdOffset(b []byte) int64 {
 	return -1
 }
 
+// Return the size of the central directory file header record at b[off]
+func fhRecordSize(b []byte, off uint32) uint32 {
+	filenameLength := le.Uint16(b[off+filenameLengthOffset : off+filenameLengthOffset+2])
+	extraLength := le.Uint16(b[off+extraFieldLengthOffset : off+extraFieldLengthOffset+2])
+	commentLength := le.Uint16(b[off+commentLengthOffset : off+commentLengthOffset+2])
+
+	return uint32(fhFixedSize + filenameLength + extraLength + commentLength)
+}
+
 // The offsets of files within the archive are wrong because we've prepended
 // the executable. So add exeLength to every offset.
 //
@@ -152,34 +161,27 @@ func (b *Bespoke) fixOffsets() error {
 		return errors.New("couldn't find EOCD in archive")
 	}
 
-	le := binary.LittleEndian
-
-	//fmt.Printf("eocd offset = %x\n", eocd)
 	nOff := eocd + nDirRecordsOffset
 	n := int(le.Uint16(buf[nOff : nOff+2]))
-	//fmt.Printf("number of records = %d\n", n)
 
 	start := le.Uint32(buf[eocd+startOffset : eocd+startOffset+4])
 	start += b.exeLength
 	le.PutUint32(buf[eocd+startOffset:eocd+startOffset+4], start)
-	//fmt.Printf("start offset = %x\n", start)
 
 	h := start
 	for i := 0; i < n; i++ {
 		offset := le.Uint32(buf[h+fhOffset : h+fhOffset+4])
-		//fmt.Printf("rewriting offset %x to %x\n", offset, offset+b.exeLength)
 		offset += b.exeLength
 		le.PutUint32(buf[h+fhOffset:h+fhOffset+4], offset)
 
-		filenameLength := le.Uint16(buf[h+filenameLengthOffset : h+filenameLengthOffset+2])
-		extraLength := le.Uint16(buf[h+extraFieldLengthOffset : h+extraFieldLengthOffset+2])
-		commentLength := le.Uint16(buf[h+commentLengthOffset : h+commentLengthOffset+2])
-
-		h += fhFixedSize + uint32(filenameLength) + uint32(extraLength) + uint32(commentLength)
+		h += fhRecordSize(buf, h)
 	}
 	return nil
 }
 
+// Read reads the next len(p) bytes from the buffer or until the bespoke binary is drained.
+// The return value n is the number of bytes read.
+// If the binary has no data to return, err is io.EOF (unless len(p) is zero); otherwise it is nil.
 func (b *Bespoke) Read(p []byte) (int, error) {
 	if !b.finalized {
 		panic("read attempted without calling finalize")
@@ -188,6 +190,8 @@ func (b *Bespoke) Read(p []byte) (int, error) {
 	return b.buffer.Read(p)
 }
 
+// WithMap creates a bespoke binary from the executable exe and the given
+// map. The executable can access the map by calling bespoke.Map()
 func WithMap(exe io.Reader, data map[string]string) (*Bespoke, error) {
 	content, err := json.Marshal(data)
 	if err != nil {
@@ -210,6 +214,8 @@ func WithMap(exe io.Reader, data map[string]string) (*Bespoke, error) {
 	return b, nil
 }
 
+// WithFile creates a bespoke binary from the executable exe and the given
+// file. The executable can access the file by calling bespoke.ReadFile()
 func WithFile(exe io.Reader, filePath string) (*Bespoke, error) {
 	b, err := newBespoke(exe)
 	if err != nil {
@@ -225,10 +231,6 @@ func WithFile(exe io.Reader, filePath string) (*Bespoke, error) {
 	}
 
 	return b, nil
-}
-
-func WithDir(exe io.Reader, dirPath string) (*Bespoke, error) {
-	return nil, nil
 }
 
 func readFile(z *zip.ReadCloser, name string) ([]byte, error) {
@@ -252,7 +254,7 @@ func readFile(z *zip.ReadCloser, name string) ([]byte, error) {
 	return nil, errors.New("file not found in archive")
 }
 
-func Map() (map[string]string, error) {
+func openSelf() (*zip.ReadCloser, error) {
 	selfPath, err := osext.Executable()
 	if err != nil {
 		return nil, err
@@ -261,6 +263,30 @@ func Map() (map[string]string, error) {
 	self, err := zip.OpenReader(selfPath)
 	if err != nil {
 		return nil, errors.New(err.Error() + ": " + selfPath)
+	}
+
+	return self, nil
+}
+
+// ReadFile reads the given file that was packaged with the currently
+// executing binary. It throws an error if this is not a bespoke binary
+// or if the named file does not exist.
+func ReadFile(name string) ([]byte, error) {
+	self, err := openSelf()
+	if err != nil {
+		return nil, err
+	}
+	defer self.Close()
+
+	return readFile(self, mapFilename)
+}
+
+// Map returns the string->string map that was packaged with the currently
+// executing binary. It throws an error if this is not a bespoke binary.
+func Map() (map[string]string, error) {
+	self, err := openSelf()
+	if err != nil {
+		return nil, err
 	}
 	defer self.Close()
 

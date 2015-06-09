@@ -1,6 +1,6 @@
 /*
 
-Command hello demonstrates how to use the bespoke package. When not customized
+Command hello demonstrates how to use the bespoke package. When run by itself
 it prints an error message.
 
 If it's turned into a bespoke binary with a map of the form

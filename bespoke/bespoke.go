@@ -1,3 +1,15 @@
+/*
+Command bespoke provides a way to create bespoke binaries.
+
+Example
+
+bespoke can be invoked as:
+
+  $ bespoke -name=world examples/hello/hello hello_world
+  $ ./hello_world
+  hello world
+
+*/
 package main
 
 import (
