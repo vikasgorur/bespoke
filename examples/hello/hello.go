@@ -1,12 +1,13 @@
 /*
-
-Command hello demonstrates how to use the bespoke package. When run by itself
+Command hello is a simple example of a bespoke binary. When run by itself
 it prints an error message.
 
 If it's turned into a bespoke binary with a map of the form
 	{"name": "vikas"}
 
 it prints "hello vikas".
+
+See examples/server for a HTTP server that uses this binary.
 */
 package main
 

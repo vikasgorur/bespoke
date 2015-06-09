@@ -11,6 +11,11 @@ consider a web application that allows its users to download a command-line
 client to interact with it. The client may need to be configured with such
 things as the user name or an access token. Using bespoke you can create a binary
 that is specifically configured for each user who downloads it.
+
+Example
+
+See documentation for examples/server for a simple HTTP server that serves
+bespoke binaries.
 */
 package bespoke
 
