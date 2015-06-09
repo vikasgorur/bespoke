@@ -1,4 +1,5 @@
 # bespoke
+[![GoDoc](https://godoc.org/github.com/vikasgorur/bespoke?status.svg)](https://godoc.org/github.com/vikasgorur/bespoke)
 
 Package bespoke provides a way to create custom binaries: files that are executable
 that also contain additional data. The data can either be a key-value map or an
