@@ -26,10 +26,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/kardianos/osext"
 	"io"
 	"io/ioutil"
+	"math"
 	"path"
 	"time"
 )
@@ -37,13 +37,28 @@ import (
 const (
 	mapFilename = ".bespoke.json"
 
+	// Offset values in the archive are uint32, and are of the form size(executable)+n
+	// Restricting the executable size to 2^31 should be good enough.
+	maxExecutableSize = math.MaxUint32 / 2
+
 	directoryEndSignature = 0x06054b50
+
+	// Offsets inside the EOCD table
+	nDirRecordsOffset = 10 // offset of total number of central directory records)
+	startOffset       = 16 // offset of start of central directory
+
+	// Offsets inside a central directory file header
+	filenameLengthOffset   = 28
+	extraFieldLengthOffset = 30
+	commentLengthOffset    = 32
+	fhOffset               = 42
+	fhFixedSize            = 46 // Size of the non-variable parts
 )
 
 type Bespoke struct {
 	buffer    *bytes.Buffer // buffer that contains the zip archive
 	archive   *zip.Writer   // zip archive
-	exeLength int64         // length of the executable that's stored at the beginning of buffer
+	exeLength uint32        // length of the executable that's stored at the beginning of buffer
 	finalized bool          // whether Close() has been called on archive
 }
 
@@ -54,12 +69,15 @@ func newBespoke(exe io.Reader) (*Bespoke, error) {
 		return nil, err
 	}
 
+	if n > maxExecutableSize {
+		return nil, errors.New("executables larger than 2^31 bytes not supported")
+	}
 	archive := zip.NewWriter(buffer)
 
 	return &Bespoke{
 		buffer:    buffer,
 		archive:   archive,
-		exeLength: n,
+		exeLength: uint32(n),
 		finalized: false,
 	}, nil
 }
@@ -109,13 +127,13 @@ func (b *Bespoke) finalize() error {
 
 func findEocdOffset(b []byte) int64 {
 	sigBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint64(sigBytes, directoryEndSignature)
+	binary.LittleEndian.PutUint32(sigBytes, directoryEndSignature)
 
 	for i := len(b) - 4; i > 0; i-- {
 		if b[i] == sigBytes[0] &&
 			b[i+1] == sigBytes[1] &&
-			b[i+2] == sigBytes[i+2] &&
-			b[i+3] == sigBytes[i+4] {
+			b[i+2] == sigBytes[2] &&
+			b[i+3] == sigBytes[3] {
 			return int64(i)
 		}
 	}
@@ -128,7 +146,37 @@ func findEocdOffset(b []byte) int64 {
 //
 // This is equivalent to the --adjust-sfx option to the zip utility.
 func (b *Bespoke) fixOffsets() error {
-	fmt.Println(findEocdOffset(b.buffer.Bytes()))
+	buf := b.buffer.Bytes()
+	eocd := findEocdOffset(buf)
+	if eocd == -1 {
+		return errors.New("couldn't find EOCD in archive")
+	}
+
+	le := binary.LittleEndian
+
+	//fmt.Printf("eocd offset = %x\n", eocd)
+	nOff := eocd + nDirRecordsOffset
+	n := int(le.Uint16(buf[nOff : nOff+2]))
+	//fmt.Printf("number of records = %d\n", n)
+
+	start := le.Uint32(buf[eocd+startOffset : eocd+startOffset+4])
+	start += b.exeLength
+	le.PutUint32(buf[eocd+startOffset:eocd+startOffset+4], start)
+	//fmt.Printf("start offset = %x\n", start)
+
+	h := start
+	for i := 0; i < n; i++ {
+		offset := le.Uint32(buf[h+fhOffset : h+fhOffset+4])
+		//fmt.Printf("rewriting offset %x to %x\n", offset, offset+b.exeLength)
+		offset += b.exeLength
+		le.PutUint32(buf[h+fhOffset:h+fhOffset+4], offset)
+
+		filenameLength := le.Uint16(buf[h+filenameLengthOffset : h+filenameLengthOffset+2])
+		extraLength := le.Uint16(buf[h+extraFieldLengthOffset : h+extraFieldLengthOffset+2])
+		commentLength := le.Uint16(buf[h+commentLengthOffset : h+commentLengthOffset+2])
+
+		h += fhFixedSize + uint32(filenameLength) + uint32(extraLength) + uint32(commentLength)
+	}
 	return nil
 }
 
@@ -212,8 +260,7 @@ func Map() (map[string]string, error) {
 
 	self, err := zip.OpenReader(selfPath)
 	if err != nil {
-		fmt.Println(err.Error(), selfPath)
-		return nil, err
+		return nil, errors.New(err.Error() + ": " + selfPath)
 	}
 	defer self.Close()
 
