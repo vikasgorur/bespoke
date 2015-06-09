@@ -15,6 +15,20 @@ that is specifically configured for each user who downloads it.
 
 See the [documentation](http://godoc.org/github.com/vikasgorur/bespoke) for more information.
 
+## Example
+
+This package lets you do things like this:
+
+```bash
+$ curl http://localhost:6060/calvin > hello_calvin
+$ chmod +x hello_calvin; ./hello_calvin
+hello calvin
+
+$ curl http://localhost:6060/hobbes > hello_hobbes
+$ chmod +x hello_hobbes; ./hello_hobbes
+hello hobbes
+```
+
 ## Contributing
 
 Feature requests, pull requests, questions and comments are welcome!
