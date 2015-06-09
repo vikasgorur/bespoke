@@ -14,3 +14,9 @@ things as the user name or an access token. Using bespoke you can create a binar
 that is specifically configured for each user who downloads it.
 
 See the [documentation](http://godoc.org/github.com/vikasgorur/bespoke) for more information.
+
+## Contributing
+
+Feature requests, pull requests, questions and comments are welcome!
+
+Tweet at me: [@vikasgorur](https://twitter.com/vikasgorur)
