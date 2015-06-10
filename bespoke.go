@@ -286,7 +286,7 @@ func ReadFile(name string) ([]byte, error) {
 	return readFile(self, mapFilename)
 }
 
-// Map returns the string->string map that was packaged with the currently
+// Map returns the map[string]string that was packaged with the currently
 // executing binary. It throws an error if this is not a bespoke binary.
 func Map() (map[string]string, error) {
 	self, err := openSelf()
@@ -307,4 +307,22 @@ func Map() (map[string]string, error) {
 	}
 
 	return m, nil
+}
+
+// ExtractMap extracts the map[string]string that was packaged with the
+// currently executing binary. The map is written at filePath as a JSON
+// file.
+func ExtractMap(filePath string) error {
+	self, err := openSelf()
+	if err != nil {
+		return err
+	}
+	defer self.Close()
+
+	content, err := readFile(self, mapFilename)
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(filePath, content, 0644)
 }
